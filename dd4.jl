@@ -1,3 +1,4 @@
+using CSV
 using Plots
 using LogExpFunctions
 using SpecialFunctions
@@ -9,6 +10,7 @@ using Optim
 using Optimization, OptimizationOptimJL, OptimizationNLopt, ForwardDiff
 using Distributions
 using LogExpFunctions
+using DataFrames
 #using Optim.LineSearches
 #using FiniteDiff
 #using NLopt
@@ -664,6 +666,7 @@ function three_bin_origination_ll_gamma(bcounts::Vector{Vector{Float64}}, corr_N
         for ind in eachindex(counts)
             count = counts[ind]
             curll = logprobs[ind] * count 
+            #ll += max(curll, log(1e-300))
             ll += curll
         end
     end
@@ -705,7 +708,6 @@ function calc_category_origination_probs_gamma(i::Int64, bin_lam::AbstractVector
         end
     end
     #println("LIKELIHOODS")
-    #println("$L100 $L101 $L110 $L111")
     #println([exp(i) for i in [L100, L101, L110, L111]])
     #exit()
     probs = [L100, L101, L110, L111]
@@ -756,6 +758,7 @@ function three_bin_extinction_ll_gamma(fcounts::Vector{Vector{Float64}}, corr_Nt
         for ind in eachindex(counts)
             count = counts[ind]
             curll = logprobs[ind] * count 
+            #ll += max(curll, log(1e-300))
             ll += curll
         end
     end
@@ -1163,10 +1166,33 @@ function search_regimes_non_dd_gamma(occ_tbl::Dict{String,Array{Int64}}, fcounts
 
     plot_non_dd_rate_curves(bin_lam, bin_mu, reg, tt)
     plot_regime_curve(corr_Nt, reg, tt, "dtt_non-dd.png")
-    
+    write_stage_param_csv_non_dd(corr_Nt, bin_lam, bin_mu, reg, psis, minx[end], tt)    
     println(reg)
     println(corr_Nt)
 end
+
+function write_stage_param_csv_non_dd(corr_Nt, bin_lam, bin_mu, reg, psis, shape, tt)
+    sorted_tt = sort(collect(tt), by = x -> x[1])
+
+    tt_keys = [pair[1] for pair in sorted_tt]
+    tt_val1 = [pair[2][1] for pair in sorted_tt]
+    tt_val2 = [pair[2][2] for pair in sorted_tt]
+
+    df = DataFrame(
+        key = tt_keys,
+        regime = reg,
+        bin_start = tt_val1,
+        bin_end = tt_val2,
+        bin_lam = bin_lam,
+        bin_mu = bin_mu,
+        corr_Nt = corr_Nt,
+        pres_rate = psis,
+        pres_gamma_shape = fill(shape, length(tt))
+    )
+    CSV.write("non_dd_stage_params.csv", df)
+
+end
+
 
 function search_regimes_dd_gamma(occ_tbl::Dict{String,Array{Int64}}, fcounts::Vector{Vector{Float64}}, bcounts::Vector{Vector{Float64}}, corr_Nt::Array{Float64}, tt::Dict{Int64,Tuple{Float64,Float64}}, psi::Float64, multi_eqr = true, log_div = false, start_div_rate = 0.0)
     min_stages = 3  # a regime cannot have fewer than this many stages
@@ -1298,13 +1324,66 @@ function search_regimes_dd_gamma(occ_tbl::Dict{String,Array{Int64}}, fcounts::Ve
     params = vcat(Ks', eqrs', alphas')
     rates = calc_dd_rates_regimes(params, corr_Nt, reg, log_div)
     plot_rate_curves(rates[1], rates[2], Ks, reg, tt)
-    #println(rates[1])
-    #println(rates[2])
-    #println(corr_Nt)
+    write_stage_param_csv_dd(eqrs, alphas, corr_Nt, rates[1], rates[2], Ks, reg, psis, minx[end], tt)
     plot_regime_curve(corr_Nt, reg, tt, "dtt_dd.png")
 end
 
-using Plots
+function write_stage_param_csv_dd(eqrs, alphas, corr_Nt, bin_lam, bin_mu, Ks, reg, psis, shape, tt)
+    sorted_tt = sort(collect(tt), by = x -> x[1])
+
+    tt_keys = [pair[1] for pair in sorted_tt]
+    tt_val1 = [pair[2][1] for pair in sorted_tt]
+    tt_val2 = [pair[2][2] for pair in sorted_tt]
+
+    bin_Ks = get_bin_Ks(Ks, reg)
+    bin_eqrs, bin_alphas = get_bin_params(eqrs, alphas, reg)
+
+    df = DataFrame(
+        key = tt_keys,
+        regime = reg,
+        bin_start = tt_val1,
+        bin_end = tt_val2,
+        bin_lam = bin_lam,
+        bin_mu = bin_mu,
+        bin_Ks = bin_Ks,
+        bin_eqrs = bin_eqrs,
+        bin_alphas = bin_alphas,
+        corr_Nt = corr_Nt,
+        pres_rate = psis,
+        pres_gamma_shape = fill(shape, length(tt))
+    )
+    CSV.write("dd_stage_params.csv", df)
+
+
+end
+
+function get_bin_params(eqrs, alphas, regimes)
+    bin_eqrs = Float64[]
+    bin_alphas = Float64[]
+    for stage_i in 1 : length(regimes)
+        reg = regimes[stage_i]
+        cur_eqr = eqrs[reg]
+        append!(bin_eqrs, cur_eqr)
+        cur_alpha = alphas[reg]
+        append!(bin_alphas, cur_alpha)
+    end
+    return bin_eqrs, bin_alphas
+end
+
+
+
+#function calc_dd_rates_regimes(params::Matrix{Float64}, corr_Nt::Array{Float64}, regimes::Array{Int64}, log_div = false)
+function get_bin_Ks(Ks, regimes)
+    bin_Ks = Float64[]
+    for stage_i in 1 : length(regimes)
+        reg = regimes[stage_i]
+        curK = Ks[reg]
+        append!(bin_Ks, curK)
+    end
+    return bin_Ks
+end
+
+
 
 function plot_non_dd_rate_curves(bin_lam, bin_mu, reg, tt)
     t = 1:length(bin_lam)
@@ -1391,6 +1470,7 @@ function plot_rate_curves(bin_lam, bin_mu, Ks, reg, tt)
     #end
 
     savefig(plt, "dd_orig_ext_rates.png")
+
     return plt
 end
 
@@ -1799,6 +1879,8 @@ function main(args)
     starting_size = 4
     #corr_Nt =  calc_range_dtt(occ_tbl)
     corr_Nt = calc_corrected_txc(occ_tbl, obs_Nt, tt, [psi for _ in 1 : length(tt)], starting_size)
+    println(corr_Nt)
+    #exit()
     #corr_Nt = [Float64(i) for i in obs_Nt]
     #clade_start, clade_end = get_start_end_bins(occ_range)
     fcounts, bcounts = get_sliding_window_counts(occ_tbl)
